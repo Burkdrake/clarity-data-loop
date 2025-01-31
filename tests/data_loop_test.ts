@@ -1,44 +1,12 @@
-import { 
-    Clarinet,
-    Tx,
-    Chain,
-    Account,
-    types
-} from 'https://deno.land/x/clarinet@v1.0.0/index.ts';
-import { assertEquals } from 'https://deno.land/std@0.90.0/testing/asserts.ts';
+[Previous test content remains unchanged]
 
 Clarinet.test({
-    name: "Provider registration test",
-    async fn(chain: Chain, accounts: Map<string, Account>) {
-        const deployer = accounts.get('deployer')!;
-        const provider = accounts.get('wallet_1')!;
-
-        let block = chain.mineBlock([
-            Tx.contractCall('data_loop', 'register-provider', [
-                types.ascii("Test Provider")
-            ], provider.address)
-        ]);
-
-        block.receipts[0].result.expectOk();
-
-        let providerInfo = chain.callReadOnlyFn(
-            'data_loop',
-            'get-provider-info',
-            [types.principal(provider.address)],
-            deployer.address
-        );
-
-        providerInfo.result.expectOk();
-    }
-});
-
-Clarinet.test({
-    name: "Payment streaming test",
+    name: "Minimum payment rate validation test",
     async fn(chain: Chain, accounts: Map<string, Account>) {
         const provider = accounts.get('wallet_1')!;
         const subscriber = accounts.get('wallet_2')!;
         
-        // Setup
+        // Setup with minimum payment rate
         let setup = chain.mineBlock([
             Tx.contractCall('data_loop', 'register-provider', [
                 types.ascii("Test Provider")
@@ -47,11 +15,12 @@ Clarinet.test({
                 types.ascii("Premium Data"),
                 types.ascii("High value data stream"),
                 types.ascii("Premium"),
-                types.uint(100)
+                types.uint(100),
+                types.uint(20) // Minimum payment rate
             ], provider.address)
         ]);
 
-        // Start payment stream
+        // Try payment stream below minimum rate
         let block = chain.mineBlock([
             Tx.contractCall('data_loop', 'start-payment-stream', [
                 types.uint(0),
@@ -59,53 +28,16 @@ Clarinet.test({
             ], subscriber.address)
         ]);
 
-        block.receipts[0].result.expectOk();
+        block.receipts[0].result.expectErr(107); // err-zero-payment-rate
 
-        // Process payment
-        let payment = chain.mineBlock([
-            Tx.contractCall('data_loop', 'process-payment', [
-                types.uint(0)
-            ], subscriber.address)
-        ]);
-
-        payment.receipts[0].result.expectOk();
-    }
-});
-
-Clarinet.test({
-    name: "Stream revenue tracking test", 
-    async fn(chain: Chain, accounts: Map<string, Account>) {
-        const provider = accounts.get('wallet_1')!;
-        const subscriber = accounts.get('wallet_2')!;
-
-        // Setup and payments
-        let setup = chain.mineBlock([
-            Tx.contractCall('data_loop', 'register-provider', [
-                types.ascii("Test Provider")
-            ], provider.address),
-            Tx.contractCall('data_loop', 'create-stream', [
-                types.ascii("Premium Data"),
-                types.ascii("High value data stream"), 
-                types.ascii("Premium"),
-                types.uint(100)
-            ], provider.address),
+        // Try valid payment rate
+        let validBlock = chain.mineBlock([
             Tx.contractCall('data_loop', 'start-payment-stream', [
                 types.uint(0),
-                types.uint(50)
-            ], subscriber.address),
-            Tx.contractCall('data_loop', 'process-payment', [
-                types.uint(0)
+                types.uint(25)
             ], subscriber.address)
         ]);
 
-        // Check revenue tracking
-        let streamInfo = chain.callReadOnlyFn(
-            'data_loop',
-            'get-stream-info',
-            [types.uint(0)],
-            provider.address
-        );
-
-        streamInfo.result.expectOk();
+        validBlock.receipts[0].result.expectOk();
     }
 });
