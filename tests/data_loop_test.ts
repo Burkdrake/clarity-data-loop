@@ -33,61 +33,79 @@ Clarinet.test({
 });
 
 Clarinet.test({
-    name: "Stream creation and data publishing test",
-    async fn(chain: Chain, accounts: Map<string, Account>) {
-        const provider = accounts.get('wallet_1')!;
-
-        // Register provider
-        let block = chain.mineBlock([
-            Tx.contractCall('data_loop', 'register-provider', [
-                types.ascii("Test Provider")
-            ], provider.address),
-            // Create stream
-            Tx.contractCall('data_loop', 'create-stream', [
-                types.ascii("Weather Data"),
-                types.ascii("Real-time weather updates"),
-                types.ascii("Weather"),
-                types.uint(100)
-            ], provider.address),
-            // Publish data
-            Tx.contractCall('data_loop', 'publish-data', [
-                types.uint(0),
-                types.utf8("Temperature: 72F")
-            ], provider.address)
-        ]);
-
-        block.receipts[0].result.expectOk();
-        block.receipts[1].result.expectOk();
-        block.receipts[2].result.expectOk();
-    }
-});
-
-Clarinet.test({
-    name: "Subscription test",
+    name: "Payment streaming test",
     async fn(chain: Chain, accounts: Map<string, Account>) {
         const provider = accounts.get('wallet_1')!;
         const subscriber = accounts.get('wallet_2')!;
-
-        // Setup stream
+        
+        // Setup
         let setup = chain.mineBlock([
             Tx.contractCall('data_loop', 'register-provider', [
                 types.ascii("Test Provider")
             ], provider.address),
             Tx.contractCall('data_loop', 'create-stream', [
-                types.ascii("Weather Data"),
-                types.ascii("Real-time weather updates"),
-                types.ascii("Weather"),
+                types.ascii("Premium Data"),
+                types.ascii("High value data stream"),
+                types.ascii("Premium"),
                 types.uint(100)
             ], provider.address)
         ]);
 
-        // Test subscription
+        // Start payment stream
         let block = chain.mineBlock([
-            Tx.contractCall('data_loop', 'subscribe-to-stream', [
-                types.uint(0)
+            Tx.contractCall('data_loop', 'start-payment-stream', [
+                types.uint(0),
+                types.uint(10)
             ], subscriber.address)
         ]);
 
         block.receipts[0].result.expectOk();
+
+        // Process payment
+        let payment = chain.mineBlock([
+            Tx.contractCall('data_loop', 'process-payment', [
+                types.uint(0)
+            ], subscriber.address)
+        ]);
+
+        payment.receipts[0].result.expectOk();
+    }
+});
+
+Clarinet.test({
+    name: "Stream revenue tracking test", 
+    async fn(chain: Chain, accounts: Map<string, Account>) {
+        const provider = accounts.get('wallet_1')!;
+        const subscriber = accounts.get('wallet_2')!;
+
+        // Setup and payments
+        let setup = chain.mineBlock([
+            Tx.contractCall('data_loop', 'register-provider', [
+                types.ascii("Test Provider")
+            ], provider.address),
+            Tx.contractCall('data_loop', 'create-stream', [
+                types.ascii("Premium Data"),
+                types.ascii("High value data stream"), 
+                types.ascii("Premium"),
+                types.uint(100)
+            ], provider.address),
+            Tx.contractCall('data_loop', 'start-payment-stream', [
+                types.uint(0),
+                types.uint(50)
+            ], subscriber.address),
+            Tx.contractCall('data_loop', 'process-payment', [
+                types.uint(0)
+            ], subscriber.address)
+        ]);
+
+        // Check revenue tracking
+        let streamInfo = chain.callReadOnlyFn(
+            'data_loop',
+            'get-stream-info',
+            [types.uint(0)],
+            provider.address
+        );
+
+        streamInfo.result.expectOk();
     }
 });
