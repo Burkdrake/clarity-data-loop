@@ -4,10 +4,12 @@
 ;; Constants
 (define-constant contract-owner tx-sender)
 (define-constant err-not-owner (err u100))
-(define-constant err-not-registered (err u101))
+(define-constant err-not-registered (err u101)) 
 (define-constant err-already-registered (err u102))
 (define-constant err-unauthorized (err u103))
 (define-constant err-invalid-stream (err u104))
+(define-constant err-insufficient-funds (err u105))
+(define-constant err-stream-expired (err u106))
 
 ;; Data Maps
 (define-map providers
@@ -16,7 +18,8 @@
         name: (string-ascii 64),
         verified: bool,
         rating: uint,
-        stream-count: uint
+        stream-count: uint,
+        total-earnings: uint
     }
 )
 
@@ -24,12 +27,13 @@
     uint
     {
         provider: principal,
-        name: (string-ascii 64),
+        name: (string-ascii 64), 
         description: (string-ascii 256),
         category: (string-ascii 32),
         price: uint,
         active: bool,
-        subscriber-count: uint
+        subscriber-count: uint,
+        total-revenue: uint
     }
 )
 
@@ -38,7 +42,9 @@
     {
         active: bool,
         expiry: uint,
-        last-access: uint
+        last-access: uint,
+        total-paid: uint,
+        payment-rate: uint
     }
 )
 
@@ -52,6 +58,7 @@
 
 ;; Data Variables 
 (define-data-var next-stream-id uint u0)
+(define-data-var platform-fee-percent uint u5)
 
 ;; Provider Management
 (define-public (register-provider (name (string-ascii 64)))
@@ -62,7 +69,8 @@
                 name: name,
                 verified: false,
                 rating: u0,
-                stream-count: u0
+                stream-count: u0,
+                total-earnings: u0
             }))
         )
     )
@@ -84,11 +92,88 @@
                     category: category,
                     price: price,
                     active: true,
-                    subscriber-count: u0
+                    subscriber-count: u0,
+                    total-revenue: u0
                 })
                 (var-set next-stream-id (+ stream-id u1))
                 (ok stream-id)
             )
+        )
+    )
+)
+
+;; Payment Streaming
+(define-public (start-payment-stream (stream-id uint) (payment-rate uint))
+    (let (
+        (stream (map-get? data-streams stream-id))
+        (subscription-key {stream-id: stream-id, subscriber: tx-sender})
+    )
+        (match stream
+            stream-data
+            (begin
+                (map-set stream-subscriptions subscription-key
+                    {
+                        active: true,
+                        expiry: (+ block-height u1440),
+                        last-access: block-height,
+                        total-paid: u0,
+                        payment-rate: payment-rate
+                    }
+                )
+                (ok true)
+            )
+            err-invalid-stream
+        )
+    )
+)
+
+(define-public (process-payment (stream-id uint))
+    (let (
+        (subscription (map-get? stream-subscriptions {stream-id: stream-id, subscriber: tx-sender}))
+        (stream (map-get? data-streams stream-id))
+    )
+        (match subscription subscription-data
+            (if (< (get expiry subscription-data) block-height)
+                err-stream-expired
+                (let (
+                    (payment-amount (get payment-rate subscription-data))
+                    (provider-amount (- payment-amount (* payment-amount (/ (var-get platform-fee-percent) u100))))
+                )
+                    (match stream stream-data
+                        (begin
+                            ;; Transfer payment to provider
+                            (try! (stx-transfer? provider-amount tx-sender (get provider stream-data)))
+                            
+                            ;; Update provider earnings
+                            (map-set providers (get provider stream-data)
+                                (merge (unwrap-panic (map-get? providers (get provider stream-data)))
+                                    {total-earnings: (+ (get total-earnings (unwrap-panic (map-get? providers (get provider stream-data)))) provider-amount)}
+                                )
+                            )
+                            
+                            ;; Update stream revenue
+                            (map-set data-streams stream-id
+                                (merge stream-data
+                                    {total-revenue: (+ (get total-revenue stream-data) payment-amount)}
+                                )
+                            )
+                            
+                            ;; Update subscription
+                            (map-set stream-subscriptions {stream-id: stream-id, subscriber: tx-sender}
+                                (merge subscription-data
+                                    {
+                                        last-access: block-height,
+                                        total-paid: (+ (get total-paid subscription-data) payment-amount)
+                                    }
+                                )
+                            )
+                            (ok true)
+                        )
+                        err-invalid-stream
+                    )
+                )
+            )
+            err-not-registered
         )
     )
 )
@@ -109,19 +194,6 @@
     )
 )
 
-;; Subscription Management
-(define-public (subscribe-to-stream (stream-id uint))
-    (let ((stream (map-get? data-streams stream-id)))
-        (if (is-some stream)
-            (ok (map-set stream-subscriptions 
-                {stream-id: stream-id, subscriber: tx-sender}
-                {active: true, expiry: (+ block-height u1440), last-access: block-height}
-            ))
-            err-invalid-stream
-        )
-    )
-)
-
 ;; Read Functions
 (define-read-only (get-provider-info (provider principal))
     (ok (map-get? providers provider))
@@ -133,4 +205,8 @@
 
 (define-read-only (get-stream-data (stream-id uint) (timestamp uint))
     (ok (map-get? stream-data {stream-id: stream-id, timestamp: timestamp}))
+)
+
+(define-read-only (get-subscription-info (stream-id uint) (subscriber principal))
+    (ok (map-get? stream-subscriptions {stream-id: stream-id, subscriber: subscriber}))
 )
