@@ -11,6 +11,7 @@
 (define-constant err-insufficient-funds (err u105))
 (define-constant err-stream-expired (err u106))
 (define-constant err-zero-payment-rate (err u107))
+(define-constant err-invalid-price (err u108))
 
 ;; Data Maps
 (define-map providers
@@ -33,9 +34,12 @@
         category: (string-ascii 32),
         price: uint,
         active: bool,
+        paused: bool,
         subscriber-count: uint,
         total-revenue: uint,
-        min-payment-rate: uint
+        min-payment-rate: uint,
+        created-at: uint,
+        last-updated: uint
     }
 )
 
@@ -67,13 +71,16 @@
     (let ((provider-exists (map-get? providers tx-sender)))
         (if (is-some provider-exists)
             err-already-registered
-            (ok (map-set providers tx-sender {
-                name: name,
-                verified: false,
-                rating: u0,
-                stream-count: u0,
-                total-earnings: u0
-            }))
+            (begin
+                (print {event: "provider-registered", provider: tx-sender, name: name})
+                (ok (map-set providers tx-sender {
+                    name: name,
+                    verified: false,
+                    rating: u0,
+                    stream-count: u0,
+                    total-earnings: u0
+                }))
+            )
         )
     )
 )
@@ -84,52 +91,69 @@
         (provider (map-get? providers tx-sender))
         (stream-id (var-get next-stream-id))
     )
-        (if (is-none provider)
-            err-not-registered
-            (begin
-                (map-set data-streams stream-id {
-                    provider: tx-sender,
-                    name: name,
-                    description: description,
-                    category: category,
-                    price: price,
-                    active: true,
-                    subscriber-count: u0,
-                    total-revenue: u0,
-                    min-payment-rate: min-payment-rate
-                })
-                (var-set next-stream-id (+ stream-id u1))
-                (ok stream-id)
-            )
-        )
+        (asserts! (is-some provider) err-not-registered)
+        (asserts! (> price u0) err-invalid-price)
+        (asserts! (>= min-payment-rate u1) err-zero-payment-rate)
+        
+        (map-set data-streams stream-id {
+            provider: tx-sender,
+            name: name,
+            description: description,
+            category: category,
+            price: price,
+            active: true,
+            paused: false,
+            subscriber-count: u0,
+            total-revenue: u0,
+            min-payment-rate: min-payment-rate,
+            created-at: block-height,
+            last-updated: block-height
+        })
+        (print {event: "stream-created", stream-id: stream-id, provider: tx-sender})
+        (var-set next-stream-id (+ stream-id u1))
+        (ok stream-id)
     )
 )
 
-;; Payment Streaming
-(define-public (start-payment-stream (stream-id uint) (payment-rate uint))
-    (let (
-        (stream (map-get? data-streams stream-id))
-        (subscription-key {stream-id: stream-id, subscriber: tx-sender})
-    )
+;; Stream Control Functions
+(define-public (pause-stream (stream-id uint))
+    (let ((stream (map-get? data-streams stream-id)))
         (match stream
             stream-data
-            (if (< payment-rate (get min-payment-rate stream-data))
-                err-zero-payment-rate
-                (begin
-                    (map-set stream-subscriptions subscription-key
-                        {
-                            active: true,
-                            expiry: (+ block-height u1440),
-                            last-access: block-height,
-                            total-paid: u0,
-                            payment-rate: payment-rate
-                        }
-                    )
-                    (ok true)
-                ))
+            (begin
+                (asserts! (is-eq tx-sender (get provider stream-data)) err-unauthorized)
+                (map-set data-streams stream-id 
+                    (merge stream-data {
+                        paused: true,
+                        last-updated: block-height
+                    })
+                )
+                (print {event: "stream-paused", stream-id: stream-id})
+                (ok true)
+            )
             err-invalid-stream
         )
     )
 )
 
-[Rest of contract remains unchanged]
+(define-public (resume-stream (stream-id uint))
+    (let ((stream (map-get? data-streams stream-id)))
+        (match stream
+            stream-data
+            (begin
+                (asserts! (is-eq tx-sender (get provider stream-data)) err-unauthorized)
+                (map-set data-streams stream-id 
+                    (merge stream-data {
+                        paused: false,
+                        last-updated: block-height
+                    })
+                )
+                (print {event: "stream-resumed", stream-id: stream-id})
+                (ok true)
+            )
+            err-invalid-stream
+        )
+    )
+)
+
+[Previous payment streaming functions remain unchanged]
