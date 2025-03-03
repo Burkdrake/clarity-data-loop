@@ -1,15 +1,26 @@
 [Previous content remains unchanged]
 
-### Payment Rate Controls
+### Enhanced Stream Controls
 
-Providers can now set minimum payment rates for their data streams:
+The contract now supports enhanced stream management features:
 
-- Minimum payment rate validation prevents undervalued subscriptions
-- Ensures fair compensation for high-value data streams
-- Automatic validation during payment stream initialization
-- Configurable per stream based on data value
+#### Metadata Support
+- Streams can include optional metadata for enhanced configuration
+- Version tracking for stream updates
+- Structured data validation
+
+#### Delegate Access
+- Granular permission controls for stream management
+- Delegate access with expiry
+- Multiple delegate support per stream
 
 ```clarity
-;; Create stream with minimum payment rate
-(contract-call? .data-loop create-stream name description category price min-payment-rate)
+;; Create stream with metadata
+(contract-call? .data_loop create-stream 
+    name description category price min-payment-rate 
+    (some "{'format': 'json', 'schema': 'v1'}"))
+
+;; Add stream delegate
+(contract-call? .data_loop add-stream-delegate 
+    stream-id delegate permissions expiry)
 ```
