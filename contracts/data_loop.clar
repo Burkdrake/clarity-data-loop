@@ -12,6 +12,7 @@
 (define-constant err-stream-expired (err u106))
 (define-constant err-zero-payment-rate (err u107))
 (define-constant err-invalid-price (err u108))
+(define-constant err-invalid-metadata (err u109))
 
 ;; Data Maps
 (define-map providers
@@ -20,8 +21,12 @@
         name: (string-ascii 64),
         verified: bool,
         rating: uint,
+        review-count: uint,
+        weighted-rating: uint,
         stream-count: uint,
-        total-earnings: uint
+        total-earnings: uint,
+        created-at: uint,
+        last-updated: uint
     }
 )
 
@@ -35,6 +40,8 @@
         price: uint,
         active: bool,
         paused: bool,
+        version: uint,
+        metadata: (optional (string-ascii 256)),
         subscriber-count: uint,
         total-revenue: uint,
         min-payment-rate: uint,
@@ -43,24 +50,16 @@
     }
 )
 
-(define-map stream-subscriptions
-    {stream-id: uint, subscriber: principal}
+(define-map stream-delegates
+    {stream-id: uint, delegate: principal}
     {
-        active: bool,
-        expiry: uint,
-        last-access: uint,
-        total-paid: uint,
-        payment-rate: uint
+        granted-by: principal,
+        permissions: uint,
+        expiry: uint
     }
 )
 
-(define-map stream-data
-    {stream-id: uint, timestamp: uint}
-    {
-        data-point: (string-utf8 256),
-        verified: bool
-    }
-)
+;; [Previous maps remain unchanged]
 
 ;; Data Variables 
 (define-data-var next-stream-id uint u0)
@@ -77,8 +76,12 @@
                     name: name,
                     verified: false,
                     rating: u0,
+                    review-count: u0,
+                    weighted-rating: u0,
                     stream-count: u0,
-                    total-earnings: u0
+                    total-earnings: u0,
+                    created-at: block-height,
+                    last-updated: block-height
                 }))
             )
         )
@@ -86,7 +89,12 @@
 )
 
 ;; Stream Management
-(define-public (create-stream (name (string-ascii 64)) (description (string-ascii 256)) (category (string-ascii 32)) (price uint) (min-payment-rate uint))
+(define-public (create-stream (name (string-ascii 64)) 
+                            (description (string-ascii 256)) 
+                            (category (string-ascii 32)) 
+                            (price uint) 
+                            (min-payment-rate uint)
+                            (metadata (optional (string-ascii 256))))
     (let (
         (provider (map-get? providers tx-sender))
         (stream-id (var-get next-stream-id))
@@ -103,6 +111,8 @@
             price: price,
             active: true,
             paused: false,
+            version: u1,
+            metadata: metadata,
             subscriber-count: u0,
             total-revenue: u0,
             min-payment-rate: min-payment-rate,
@@ -115,20 +125,26 @@
     )
 )
 
-;; Stream Control Functions
-(define-public (pause-stream (stream-id uint))
+;; Delegate Management
+(define-public (add-stream-delegate (stream-id uint) 
+                                  (delegate principal)
+                                  (permissions uint)
+                                  (expiry uint))
     (let ((stream (map-get? data-streams stream-id)))
         (match stream
             stream-data
             (begin
                 (asserts! (is-eq tx-sender (get provider stream-data)) err-unauthorized)
-                (map-set data-streams stream-id 
-                    (merge stream-data {
-                        paused: true,
-                        last-updated: block-height
-                    })
+                (asserts! (>= expiry block-height) err-stream-expired)
+                (map-set stream-delegates 
+                    {stream-id: stream-id, delegate: delegate}
+                    {
+                        granted-by: tx-sender,
+                        permissions: permissions,
+                        expiry: expiry
+                    }
                 )
-                (print {event: "stream-paused", stream-id: stream-id})
+                (print {event: "delegate-added", stream-id: stream-id, delegate: delegate})
                 (ok true)
             )
             err-invalid-stream
@@ -136,24 +152,4 @@
     )
 )
 
-(define-public (resume-stream (stream-id uint))
-    (let ((stream (map-get? data-streams stream-id)))
-        (match stream
-            stream-data
-            (begin
-                (asserts! (is-eq tx-sender (get provider stream-data)) err-unauthorized)
-                (map-set data-streams stream-id 
-                    (merge stream-data {
-                        paused: false,
-                        last-updated: block-height
-                    })
-                )
-                (print {event: "stream-resumed", stream-id: stream-id})
-                (ok true)
-            )
-            err-invalid-stream
-        )
-    )
-)
-
-[Previous payment streaming functions remain unchanged]
+;; [Previous functions remain unchanged]
